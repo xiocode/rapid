@@ -300,6 +300,10 @@ export interface RpdDataModelProperty {
    * 当设置了 linkTableName 时，可以设置关联关系表所在的 Schema。
    */
   linkSchema?: string;
+  /**
+   * 当 relation 为 many 或 one 时，允许创建外键，用于删除时级联删除。
+   */
+  isForeignKey?: boolean;
 }
 
 export type RpdDataPropertyTypes =

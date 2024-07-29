@@ -25,10 +25,15 @@ import {
 import * as listMetaModels from "./actionHandlers/listMetaModels";
 import * as listMetaRoutes from "./actionHandlers/listMetaRoutes";
 import * as getMetaModelDetail from "./actionHandlers/getMetaModelDetail";
-import { find, isString, map } from "lodash";
-import { getEntityPropertiesIncludingBase, getEntityPropertyByCode, isOneRelationProperty, isRelationProperty } from "~/helpers/metaHelper";
-import { DataAccessPgColumnTypes } from "~/dataAccess/dataAccessTypes";
-import { pgPropertyTypeColumnMap } from "~/dataAccess/columnTypeMapper";
+import {find, isString, map} from "lodash";
+import {
+  getEntityPropertiesIncludingBase,
+  getEntityPropertyByCode,
+  isOneRelationProperty,
+  isRelationProperty
+} from "~/helpers/metaHelper";
+import {DataAccessPgColumnTypes} from "~/dataAccess/dataAccessTypes";
+import {pgPropertyTypeColumnMap} from "~/dataAccess/columnTypeMapper";
 
 class MetaManager implements RapidPlugin {
   get code(): string {
@@ -92,7 +97,9 @@ async function handleEntityCreateEvent(server: IRpdServer, sender: RapidPlugin, 
     const model: Partial<RpdDataModel> = payload.after;
     if (model.tableName) {
       const model: RpdDataModel = payload.after;
-      await server.queryDatabaseObject(`CREATE TABLE ${queryBuilder.quoteTable(model)} ();`, []);
+      await server.queryDatabaseObject(`CREATE TABLE ${ queryBuilder.quoteTable(model) }
+                                        (
+                                        );`, []);
     }
   }
 }
@@ -109,7 +116,8 @@ async function handleEntityUpdateEvent(server: IRpdServer, sender: RapidPlugin, 
     if (modelChanges.tableName) {
       const modelBefore: RpdDataModel = payload.before;
       await server.queryDatabaseObject(
-        `ALTER TABLE ${queryBuilder.quoteTable(modelBefore)} RENAME TO ${queryBuilder.quoteTable(modelChanges as QuoteTableOptions)}`,
+        `ALTER TABLE ${ queryBuilder.quoteTable(modelBefore) }
+          RENAME TO ${ queryBuilder.quoteTable(modelChanges as QuoteTableOptions) }`,
         [],
       );
     }
@@ -129,7 +137,7 @@ async function handleEntityDeleteEvent(server: IRpdServer, sender: RapidPlugin, 
 
   if (payload.modelSingularCode === "model") {
     const deletedModel: RpdDataModel = payload.before;
-    await server.queryDatabaseObject(`DROP TABLE ${queryBuilder.quoteTable(deletedModel)}`, []);
+    await server.queryDatabaseObject(`DROP TABLE ${ queryBuilder.quoteTable(deletedModel) }`, []);
   } else if (payload.modelSingularCode === "property") {
     const deletedProperty: RpdDataModelProperty = payload.before;
 
@@ -149,7 +157,8 @@ async function handleEntityDeleteEvent(server: IRpdServer, sender: RapidPlugin, 
     });
     const model = await dataAccessor.findById((deletedProperty as any).modelId);
     if (model) {
-      await server.queryDatabaseObject(`ALTER TABLE ${queryBuilder.quoteTable(model)} DROP COLUMN ${queryBuilder.quoteObject(columnNameToDrop)}`, []);
+      await server.queryDatabaseObject(`ALTER TABLE ${ queryBuilder.quoteTable(model) }
+        DROP COLUMN ${ queryBuilder.quoteObject(columnNameToDrop) }`, []);
     }
   }
 }
@@ -192,27 +201,46 @@ type ConstraintInformation = {
 async function syncDatabaseSchema(server: IRpdServer, applicationConfig: RpdApplicationConfig) {
   const logger = server.getLogger();
   logger.info("Synchronizing database schema...");
-  const sqlQueryTableInformations = `SELECT table_schema, table_name FROM information_schema.tables`;
+  const sqlQueryTableInformations = `SELECT table_schema, table_name
+                                     FROM information_schema.tables`;
   const tablesInDb: TableInformation[] = await server.queryDatabaseObject(sqlQueryTableInformations);
   const { queryBuilder } = server;
 
   for (const model of applicationConfig.models) {
-    logger.debug(`Checking data table for '${model.namespace}.${model.singularCode}'...`);
+    logger.debug(`Checking data table for '${ model.namespace }.${ model.singularCode }'...`);
 
     const expectedTableSchema = model.schema || server.databaseConfig.dbDefaultSchema;
     const expectedTableName = model.tableName;
     const tableInDb = find(tablesInDb, { table_schema: expectedTableSchema, table_name: expectedTableName });
     if (!tableInDb) {
-      await server.queryDatabaseObject(`CREATE TABLE IF NOT EXISTS ${queryBuilder.quoteTable(model)} ()`, []);
+      await server.queryDatabaseObject(`CREATE TABLE IF NOT EXISTS ${ queryBuilder.quoteTable(model) }
+                                        (
+                                        )`, []);
     }
   }
 
-  const sqlQueryColumnInformations = `SELECT table_schema, table_name, column_name, data_type, udt_name, is_nullable, column_default, character_maximum_length, numeric_precision, numeric_scale
-  FROM information_schema.columns;`;
+  const sqlQueryColumnInformations = `SELECT table_schema,
+                                             table_name,
+                                             column_name,
+                                             data_type,
+                                             udt_name,
+                                             is_nullable,
+                                             column_default,
+                                             character_maximum_length,
+                                             numeric_precision,
+                                             numeric_scale
+                                      FROM information_schema.columns;`;
   const columnsInDb: ColumnInformation[] = await server.queryDatabaseObject(sqlQueryColumnInformations, []);
 
   for (const model of applicationConfig.models) {
-    logger.debug(`Checking data columns for '${model.namespace}.${model.singularCode}'...`);
+    logger.debug(`Checking data columns for '${ model.namespace }.${ model.singularCode }'...`);
+
+    // alter table public.base_locations
+    // add constraint fk_base_locations_base_locations foreign key (parent_id) references public.base_locations (id) on delete cascade ;
+
+    // alter table public.base_locations
+    // add warehouse_id integer
+    // constraint fk_base_locations_warehouse_id references public.base_warehouses (id) on delete cascade;
 
     for (const property of model.properties) {
       let columnDDL = "";
@@ -220,9 +248,8 @@ async function syncDatabaseSchema(server: IRpdServer, applicationConfig: RpdAppl
         if (property.relation === "one") {
           const targetModel = applicationConfig.models.find((item) => item.singularCode === property.targetSingularCode);
           if (!targetModel) {
-            logger.warn(`Cannot find target model with singular code "${property.targetSingularCode}".`);
+            logger.warn(`Cannot find target model with singular code "${ property.targetSingularCode }".`);
           }
-
           const columnInDb: ColumnInformation | undefined = find(columnsInDb, {
             table_schema: model.schema || "public",
             table_name: model.tableName,
@@ -237,6 +264,8 @@ async function syncDatabaseSchema(server: IRpdServer, applicationConfig: RpdAppl
               type: "integer",
               autoIncrement: false,
               notNull: property.required,
+              isForeignKey: property.isForeignKey,
+              targetTableName: targetModel.tableName,
             });
           }
         } else if (property.relation === "many") {
@@ -254,15 +283,16 @@ async function syncDatabaseSchema(server: IRpdServer, applicationConfig: RpdAppl
               });
             }
 
-            const contraintName = `${property.linkTableName}_pk`;
-            columnDDL += `ALTER TABLE ${queryBuilder.quoteTable({
+            const constraintName = `${ property.linkTableName }_pk`;
+            columnDDL += `ALTER TABLE ${ queryBuilder.quoteTable({
               schema: property.linkSchema,
               tableName: property.linkTableName,
-            })} ADD CONSTRAINT ${queryBuilder.quoteObject(contraintName)} PRIMARY KEY (id);`;
+            }) }
+              ADD CONSTRAINT ${ queryBuilder.quoteObject(constraintName) } PRIMARY KEY (id);`;
           } else {
             const targetModel = applicationConfig.models.find((item) => item.singularCode === property.targetSingularCode);
             if (!targetModel) {
-              logger.warn(`Cannot find target model with singular code "${property.targetSingularCode}".`);
+              logger.warn(`Cannot find target model with singular code "${ property.targetSingularCode }".`);
               continue;
             }
 
@@ -298,6 +328,10 @@ async function syncDatabaseSchema(server: IRpdServer, applicationConfig: RpdAppl
           column_name: columnName,
         });
 
+        if (property.isForeignKey) {
+          throw new Error("only relation property can be foreign key");
+        }
+
         if (!columnInDb) {
           // create column if not exists
           columnDDL = generateCreateColumnDDL(queryBuilder, {
@@ -313,34 +347,39 @@ async function syncDatabaseSchema(server: IRpdServer, applicationConfig: RpdAppl
         } else {
           const expectedColumnType = pgPropertyTypeColumnMap[property.type];
           if (columnInDb.udt_name !== expectedColumnType) {
-            const sqlAlterColumnType = `alter table ${queryBuilder.quoteTable(model)} alter column ${queryBuilder.quoteObject(
-              columnName,
-            )} type ${expectedColumnType}`;
+            const sqlAlterColumnType = `alter table ${ queryBuilder.quoteTable(model) }
+              alter column ${ queryBuilder.quoteObject(
+                columnName,
+              ) } type ${ expectedColumnType }`;
             await server.tryQueryDatabaseObject(sqlAlterColumnType);
           }
 
           if (property.defaultValue) {
             if (!columnInDb.column_default) {
-              const sqlSetColumnDefault = `alter table ${queryBuilder.quoteTable(model)} alter column ${queryBuilder.quoteObject(columnName)} set default ${
-                property.defaultValue
-              }`;
+              const sqlSetColumnDefault = `alter table ${ queryBuilder.quoteTable(model) }
+                alter column ${ queryBuilder.quoteObject(columnName) } set default ${
+                  property.defaultValue
+                }`;
               await server.tryQueryDatabaseObject(sqlSetColumnDefault);
             }
           } else {
             if (columnInDb.column_default && !property.autoIncrement) {
-              const sqlDropColumnDefault = `alter table ${queryBuilder.quoteTable(model)} alter column ${queryBuilder.quoteObject(columnName)} drop default`;
+              const sqlDropColumnDefault = `alter table ${ queryBuilder.quoteTable(model) }
+                alter column ${ queryBuilder.quoteObject(columnName) } drop default`;
               await server.tryQueryDatabaseObject(sqlDropColumnDefault);
             }
           }
 
           if (property.required) {
             if (columnInDb.is_nullable === "YES") {
-              const sqlSetColumnNotNull = `alter table ${queryBuilder.quoteTable(model)} alter column ${queryBuilder.quoteObject(columnName)} set not null`;
+              const sqlSetColumnNotNull = `alter table ${ queryBuilder.quoteTable(model) }
+                alter column ${ queryBuilder.quoteObject(columnName) } set not null`;
               await server.tryQueryDatabaseObject(sqlSetColumnNotNull);
             }
           } else {
             if (columnInDb.is_nullable === "NO") {
-              const sqlDropColumnNotNull = `alter table ${queryBuilder.quoteTable(model)} alter column ${queryBuilder.quoteObject(columnName)} drop not null`;
+              const sqlDropColumnNotNull = `alter table ${ queryBuilder.quoteTable(model) }
+                alter column ${ queryBuilder.quoteObject(columnName) } drop not null`;
               await server.tryQueryDatabaseObject(sqlDropColumnNotNull);
             }
           }
@@ -349,13 +388,15 @@ async function syncDatabaseSchema(server: IRpdServer, applicationConfig: RpdAppl
     }
   }
 
-  const sqlQueryConstraints = `SELECT table_schema, table_name, constraint_type, constraint_name FROM information_schema.table_constraints WHERE constraint_type = 'PRIMARY KEY';`;
+  const sqlQueryConstraints = `SELECT table_schema, table_name, constraint_type, constraint_name
+                               FROM information_schema.table_constraints
+                               WHERE constraint_type = 'PRIMARY KEY';`;
   const constraintsInDb: ConstraintInformation[] = await server.queryDatabaseObject(sqlQueryConstraints);
   for (const model of applicationConfig.models) {
     const expectedTableSchema = model.schema || server.databaseConfig.dbDefaultSchema;
     const expectedTableName = model.tableName;
-    const expectedContraintName = `${expectedTableName}_pk`;
-    logger.debug(`Checking pk for '${expectedTableSchema}.${expectedTableName}'...`);
+    const expectedContraintName = `${ expectedTableName }_pk`;
+    logger.debug(`Checking pk for '${ expectedTableSchema }.${ expectedTableName }'...`);
     const constraintInDb = find(constraintsInDb, {
       table_schema: expectedTableSchema,
       table_name: expectedTableName,
@@ -364,7 +405,8 @@ async function syncDatabaseSchema(server: IRpdServer, applicationConfig: RpdAppl
     });
     if (!constraintInDb) {
       await server.queryDatabaseObject(
-        `ALTER TABLE ${queryBuilder.quoteTable(model)} ADD CONSTRAINT ${queryBuilder.quoteObject(expectedContraintName)} PRIMARY KEY (id);`,
+        `ALTER TABLE ${ queryBuilder.quoteTable(model) }
+          ADD CONSTRAINT ${ queryBuilder.quoteObject(expectedContraintName) } PRIMARY KEY (id);`,
         [],
       );
     }
@@ -393,25 +435,32 @@ function generateCreateColumnDDL(
     autoIncrement?: boolean;
     notNull?: boolean;
     defaultValue?: string;
+    isForeignKey?: boolean;
+    targetTableName?: string;
   },
 ) {
-  let columnDDL = `ALTER TABLE ${queryBuilder.quoteTable(options)} ADD`;
-  columnDDL += ` ${queryBuilder.quoteObject(options.name)}`;
+  let columnDDL = `ALTER TABLE ${ queryBuilder.quoteTable(options) }
+    ADD`;
+  columnDDL += ` ${ queryBuilder.quoteObject(options.name) }`;
   if (options.type === "integer" && options.autoIncrement) {
     columnDDL += ` serial`;
   } else {
     const columnType = pgPropertyTypeColumnMap[options.type];
     if (!columnType) {
-      throw new Error(`Property type "${options.type}" is not supported.`);
+      throw new Error(`Property type "${ options.type }" is not supported.`);
     }
-    columnDDL += ` ${columnType}`;
+    columnDDL += ` ${ columnType }`;
   }
   if (options.notNull) {
     columnDDL += " NOT NULL";
   }
 
   if (options.defaultValue) {
-    columnDDL += ` DEFAULT ${options.defaultValue}`;
+    columnDDL += ` DEFAULT ${ options.defaultValue }`;
+  }
+
+  if (options.isForeignKey && options.targetTableName) {
+    columnDDL += ` CONSTRAINT fk_${ options.tableName }_${ options.name } REFERENCES ${ queryBuilder.quoteTable({ tableName: options.targetTableName }) } (id) ON DELETE CASCADE `;
   }
 
   return columnDDL;
@@ -426,13 +475,14 @@ function generateLinkTableDDL(
     selfIdColumnName: string;
   },
 ) {
-  let columnDDL = `CREATE TABLE ${queryBuilder.quoteTable({
+  let columnDDL = `CREATE TABLE ${ queryBuilder.quoteTable({
     schema: options.linkSchema,
     tableName: options.linkTableName,
-  })} (`;
+  }) }
+                   (`;
   columnDDL += `id serial not null,`;
-  columnDDL += `${queryBuilder.quoteObject(options.selfIdColumnName)} integer not null,`;
-  columnDDL += `${queryBuilder.quoteObject(options.targetIdColumnName)} integer not null);`;
+  columnDDL += `${ queryBuilder.quoteObject(options.selfIdColumnName) } integer not null,`;
+  columnDDL += `${ queryBuilder.quoteObject(options.targetIdColumnName) } integer not null);`;
 
   return columnDDL;
 }
@@ -468,20 +518,22 @@ function generateTableIndexDDL(queryBuilder: IQueryBuilder, server: IRpdServer, 
     }
 
     if (indexProp.order === "desc") {
-      return `${columnName} desc`;
+      return `${ columnName } desc`;
     }
 
     return columnName;
   });
 
-  let ddl = `CREATE ${index.unique ? "UNIQUE" : ""} INDEX ${indexName} `;
-  ddl += `ON ${queryBuilder.quoteTable({
+  let ddl = `CREATE
+  ${ index.unique ? "UNIQUE" : "" } INDEX
+  ${ indexName } `;
+  ddl += `ON ${ queryBuilder.quoteTable({
     schema: model.schema,
     tableName: model.tableName,
-  })} (${indexColumns.join(", ")})`;
+  }) } (${ indexColumns.join(", ") })`;
 
   if (index.conditions) {
-    ddl += ` WHERE ${queryBuilder.buildFiltersExpression(model, index.conditions)}`;
+    ddl += ` WHERE ${ queryBuilder.buildFiltersExpression(model, index.conditions) }`;
   }
 
   return ddl;
